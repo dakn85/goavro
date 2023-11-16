@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"regexp"
 	"strings"
+	"strconv"
 	"time"
 )
 
@@ -292,32 +293,43 @@ func nativeFromDecimalBytes(fn toNativeFn, precision, scale int) toNativeFn {
 		if !ok {
 			return nil, bytes, fmt.Errorf("cannot transform to native decimal, expected []byte, received %T", d)
 		}
-		num := big.NewInt(0)
-		fromSignedBytes(num, bs)
-		denom := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil)
-		r := new(big.Rat).SetFrac(num, denom)
-		return r, b, nil
+		
+		s, err := strconv.ParseFloat(string(bs), 64)
+
+		return s, b, nil
 	}
 }
 
 func decimalBytesFromNative(fromNativeFn fromNativeFn, toBytesFn toBytesFn, precision, scale int) fromNativeFn {
 	return func(b []byte, d interface{}) ([]byte, error) {
-		r, ok := d.(*big.Rat)
+		// Convert decimal string to float64
+		decimal, ok := d.(float64)
+
 		if !ok {
 			return nil, fmt.Errorf("cannot transform to bytes, expected *big.Rat, received %T", d)
 		}
-		// Reduce accuracy to precision by dividing and multiplying by digit length
-		num := big.NewInt(0).Set(r.Num())
-		denom := big.NewInt(0).Set(r.Denom())
-		i := new(big.Int).Mul(num, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
-		// divide that by the denominator
-		precnum := new(big.Int).Div(i, denom)
-		bout, err := toBytesFn(precnum)
+
+		result, err := floatToBigScaled(decimal, scale)
+
+		bout, err := toBytesFn(result)
 		if err != nil {
 			return nil, err
 		}
 		return fromNativeFn(b, bout)
 	}
+}
+
+func floatToBigScaled(decimal float64, scale int) (*big.Int, error) {
+	decimalFloat := new(big.Float).SetFloat64(decimal)
+	scaleFactor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil)
+	valueScaled := new(big.Float).Mul(decimalFloat, new(big.Float).SetInt(scaleFactor))
+
+	// Round to the nearest integer
+	rounded := new(big.Int)
+	valueScaled.Add(valueScaled, big.NewFloat(0.5)) // Add 0.5 for rounding
+	valueScaled.Int(rounded)
+
+	return rounded, nil
 }
 
 func makeDecimalFixedCodec(st map[string]*Codec, enclosingNamespace string, schemaMap map[string]interface{}) (*Codec, error) {
